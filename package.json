@@ -1,16 +1,14 @@
 {
-  "name": "MyTVStremioAddon",
-  "version": "1.0.0",
+  "name": "mytvstremioaddon",
   "type": "module",
-  "private": true,
-  "engines": {
-    "node": ">=18"
-  },
+  "version": "1.0.0",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
+    "cors": "^2.8.5",
     "node-fetch": "^3.3.2"
   }
 }
