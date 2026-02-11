@@ -22,34 +22,30 @@ const manifest = {
   version: "1.0.0",
   name: "FREE LIV TV",
   description: "Tamil Live TV - 200+ Channels",
-  types: ["tv", "channel"],  // Added "channel" type
+  types: ["tv"],
   catalogs: [
     {
       type: "tv",
       id: "tamil-all",
-      name: "All Channels",
-      extra: [{ name: "genre" }]
+      name: "All Channels"
     },
     {
       type: "tv",
       id: "tamil-cricket",
-      name: "Cricket",
-      extra: [{ name: "genre" }]
+      name: "Cricket"
     },
     {
       type: "tv",
       id: "tamil-movies", 
-      name: "Movies",
-      extra: [{ name: "genre" }]
+      name: "Movies"
     },
     {
       type: "tv",
       id: "tamil-news",
-      name: "News",
-      extra: [{ name: "genre" }]
+      name: "News"
     }
   ],
-  resources: ["catalog", "meta", "stream"],  // Added "meta" resource
+  resources: ["catalog", "meta", "stream"],
   idPrefixes: ["tamil:"],
   behaviorHints: {
     adult: false,
@@ -59,8 +55,8 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-// Catalog Handler
-builder.defineCatalogHandler(async ({ type, id, extra }) => {
+// Catalog Handler - Simplified for performance
+builder.defineCatalogHandler(async ({ type, id }) => {
   console.log(`[CATALOG] Request: type=${type}, id=${id}`);
   
   if (type !== "tv") {
@@ -84,31 +80,12 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
       id: "tamil:" + encodeId(ch.url),
       type: "tv",
       name: ch.name,
-      
-      // IMPORTANT: These fields make the dialog appear
-      poster: ch.logo || undefined,
       posterShape: "square",
-      background: ch.logo || undefined,
-      description: `${ch.category || "Live TV"} • ${ch.group || "Tamil Channel"}`,
-      
-      // This tells Stremio it's a live channel
+      description: ch.category || "Live TV",
       genres: [ch.category || "Entertainment"],
-      releaseInfo: "LIVE",  // Important for live channels
-      
-      // Additional metadata
-      links: [],
-      trailers: [],
-      runtime: "LIVE",
-      
-      // Behavior hints for TV
-      behaviorHints: {
-        defaultVideoId: "tamil:" + encodeId(ch.url),  // Important!
-        hasScheduledVideos: false
-      }
+      releaseInfo: "LIVE"
     }));
 
-    console.log(`[CATALOG] Returning ${metas.length} items for ${id}`);
-    
     return { metas };
 
   } catch (error) {
@@ -117,7 +94,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   }
 });
 
-// Meta Handler (IMPORTANT - This creates the dialog!)
+// Meta Handler - Minimal for speed
 builder.defineMetaHandler(async ({ type, id }) => {
   console.log(`[META] Request: type=${type}, id=${id}`);
   
@@ -134,60 +111,23 @@ builder.defineMetaHandler(async ({ type, id }) => {
       encodeId(ch.url) === id.replace("tamil:", "")
     );
 
-    if (!channel) {
-      // Create basic meta if channel not found
-      return {
-        meta: {
-          id: id,
-          type: "tv",
-          name: "Live Channel",
-          releaseInfo: "LIVE",
-          description: "Live TV Channel",
-          videos: [
-            {
-              id: id,
-              title: "Watch Live",
-              released: new Date().toISOString(),
-              streams: [{ url: streamUrl }]
-            }
-          ]
-        }
-      };
-    }
+    const channelName = channel ? channel.name : "Live Channel";
 
-    // Return full metadata
+    // Minimal metadata for faster loading
     return {
       meta: {
         id: id,
         type: "tv",
-        name: channel.name,
-        poster: channel.logo || undefined,
-        posterShape: "square",
-        background: channel.logo || undefined,
-        description: `${channel.category} • ${channel.group}\n\nLive TV Channel`,
+        name: channelName,
         releaseInfo: "LIVE",
-        runtime: "LIVE",
-        genres: [channel.category || "Entertainment"],
-        
-        // IMPORTANT: videos array creates the "Play Now" button
+        description: "Live TV Channel",
         videos: [
           {
             id: id,
-            title: "🔴 Watch Live",
-            released: new Date().toISOString(),
-            overview: "Click to watch live stream",
-            thumbnail: channel.logo || undefined,
-            streams: [{ url: streamUrl }],
-            available: true
+            title: "Watch Live",
+            released: new Date().toISOString()
           }
-        ],
-        
-        // Behavior hints
-        behaviorHints: {
-          defaultVideoId: id,
-          hasScheduledVideos: false,
-          isLive: true
-        }
+        ]
       }
     };
 
@@ -197,7 +137,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
   }
 });
 
-// Stream Handler
+// Stream Handler - OPTIMIZED FOR SAMSUNG TV
 builder.defineStreamHandler(async ({ type, id }) => {
   console.log(`[STREAM] Request: type=${type}, id=${id}`);
   
@@ -206,25 +146,52 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 
   try {
-    const streamUrl = decodeId(id.replace("tamil:", ""));
+    const encodedId = id.replace("tamil:", "");
+    const streamUrl = decodeId(encodedId);
     
     console.log(`[STREAM] URL: ${streamUrl}`);
 
-    // Return streams
-    return {
-      streams: [
-        {
-          url: streamUrl,
-          title: "Live Stream",
-          name: "FREE LIV TV",
-          behaviorHints: {
-            notWebReady: true,
-            isLive: true,
-            bingeGroup: "tamil-live"
-          }
+    // Get base URL for proxy
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || 
+                   `https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost:3000'}`;
+
+    // IMPORTANT: Return multiple stream options for Samsung TV
+    const streams = [
+      // Option 1: Direct stream (fastest if it works)
+      {
+        name: "Direct",
+        title: "Fast",
+        url: streamUrl,
+        behaviorHints: {
+          notWebReady: true,
+          bingeGroup: "tamil-live"
         }
-      ]
-    };
+      },
+      
+      // Option 2: Proxied stream (more reliable)
+      {
+        name: "Proxy",
+        title: "Stable",
+        url: `${baseUrl}/stream-proxy/${encodedId}`,
+        behaviorHints: {
+          notWebReady: true,
+          bingeGroup: "tamil-live"
+        }
+      },
+      
+      // Option 3: HLS proxy with chunked loading
+      {
+        name: "Optimized",
+        title: "Samsung TV",
+        url: `${baseUrl}/hls/${encodedId}/playlist.m3u8`,
+        behaviorHints: {
+          notWebReady: true,
+          bingeGroup: "tamil-live"
+        }
+      }
+    ];
+
+    return { streams };
 
   } catch (error) {
     console.error('[STREAM] Error:', error);
