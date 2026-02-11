@@ -11,7 +11,7 @@ module.exports = {
   APP_ID: 'org.freelivtv.tamil',
   
   // URLs
-  PLAYLIST_URL: process.env.PLAYLIST_URL || 'https://raw.githubusercontent.com/amit-654584/jtv/main/jtv.m3u',
+  PLAYLIST_URL: process.env.PLAYLIST_URL || 'https://raw.githubusercontent.com/Jash-k/MyTVAddon/refs/heads/main/starshare.m3u',
   BASE_URL: process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || null,
   
   // Cache Settings
