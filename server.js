@@ -5,6 +5,11 @@ import { loadChannels } from "./m3u.js";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Cache for channels
+let channelsCache = null;
+let cacheTime = 0;
+const CACHE_DURATION = 1000 * 60 * 30; // 30 minutes
+
 // ===========================
 // CORS Middleware
 // ===========================
@@ -12,6 +17,13 @@ app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "*");
   res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.header("Access-Control-Allow-Credentials", "true");
+  
+  // Handle OPTIONS preflight
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  
   next();
 });
 
@@ -32,6 +44,16 @@ function decodeId(id) {
   return Buffer.from(b64, "base64").toString("utf8");
 }
 
+// Get cached channels
+async function getCachedChannels() {
+  const now = Date.now();
+  if (!channelsCache || (now - cacheTime) > CACHE_DURATION) {
+    channelsCache = await loadChannels();
+    cacheTime = now;
+  }
+  return channelsCache;
+}
+
 // ===========================
 // MANIFEST
 // ===========================
@@ -40,14 +62,16 @@ app.get("/manifest.json", (req, res) => {
     id: "org.freelivtv.tamil",
     version: "1.0.0",
     name: "FREE LIV TV",
-    description: "Tamil Live TV Channels & Movies - 180+ Channels",
-    logo: "https://i.ibb.co/p4knk5y/images-4.png",
+    description: "Tamil Live TV - 180+ Channels",
     types: ["tv"],
     catalogs: [
       {
         type: "tv",
         id: "tamil",
-        name: "Tamil Live TV"
+        name: "Tamil Live TV",
+        extra: [
+          { name: "skip", isRequired: false }
+        ]
       }
     ],
     resources: ["catalog", "stream"],
@@ -55,37 +79,44 @@ app.get("/manifest.json", (req, res) => {
     behaviorHints: {
       adult: false,
       p2p: false,
-      configurable: false
+      configurable: false,
+      configurationRequired: false
     }
   });
 });
 
 // ===========================
-// CATALOG
+// CATALOG (Optimized with pagination)
 // ===========================
 app.get("/catalog/:type/:id.json", async (req, res) => {
   const { type, id } = req.params;
+  const skip = parseInt(req.query.skip) || 0;
+  const limit = 100; // Limit per page for TV
 
-  // Validate request
   if (type !== "tv" || id !== "tamil") {
     return res.json({ metas: [] });
   }
 
   try {
-    const channels = await loadChannels();
+    const channels = await getCachedChannels();
+    
+    // Paginate for TV performance
+    const paginatedChannels = channels.slice(skip, skip + limit);
 
-    const metas = channels.map(ch => ({
+    const metas = paginatedChannels.map(ch => ({
       id: "tamil:" + encodeId(ch.url),
       type: "tv",
       name: ch.name,
-      poster: ch.logo || "https://i.ibb.co/p4knk5y/images-4.png",
       posterShape: "square",
-      background: ch.logo || "https://i.ibb.co/p4knk5y/images-4.png",
-      description: `${ch.category || "Live TV"} • Tamil Channel`,
+      description: `${ch.category || "Live TV"}`,
       genres: [ch.category || "Entertainment"]
     }));
 
-    res.json({ metas });
+    res.json({ 
+      metas,
+      // Tell Stremio there are more items
+      hasMore: skip + limit < channels.length
+    });
 
   } catch (error) {
     console.error("❌ Catalog error:", error);
@@ -94,12 +125,11 @@ app.get("/catalog/:type/:id.json", async (req, res) => {
 });
 
 // ===========================
-// STREAM
+// STREAM (Simplified for TV)
 // ===========================
 app.get("/stream/:type/:id.json", async (req, res) => {
   const { type, id } = req.params;
 
-  // Validate request
   if (type !== "tv" || !id.startsWith("tamil:")) {
     return res.json({ streams: [] });
   }
@@ -107,70 +137,36 @@ app.get("/stream/:type/:id.json", async (req, res) => {
   try {
     const streamUrl = decodeId(id.replace("tamil:", ""));
     
-    // Primary stream option
+    // Simple direct stream for TV - no fancy processing
     const streams = [
       {
-        name: "FREE LIV TV",
-        title: "▶️ Live Stream",
+        name: "Stream 1",
+        title: "Direct",
         url: streamUrl,
         behaviorHints: {
-          notWebReady: false,
+          notWebReady: true,  // Important for TV
           bingeGroup: "tamil-live-tv",
-          videoSize: 1920 * 1080,
-          videoCodec: "h264,h265",
-          audioCodec: "aac,mp3"
+          isLive: true
         }
       }
     ];
 
-    // Try to resolve HLS variants for better quality
-    if (streamUrl.includes(".m3u8")) {
-      try {
-        const response = await fetch(streamUrl, {
-          method: "GET",
-          headers: {
-            "User-Agent": "Stremio/4.0 (Samsung; Tizen)",
-            "Accept": "*/*"
-          },
-          timeout: 5000
-        });
-
-        if (response.ok) {
-          const m3u8Content = await response.text();
-          
-          // Check if master playlist with variants
-          if (m3u8Content.includes("#EXT-X-STREAM-INF")) {
-            const lines = m3u8Content.split("\n");
-            
-            for (let i = 0; i < lines.length; i++) {
-              if (lines[i].includes("#EXT-X-STREAM-INF") && lines[i + 1]) {
-                const variantUrl = lines[i + 1].trim();
-                
-                // Resolve relative URLs
-                const fullUrl = variantUrl.startsWith("http") 
-                  ? variantUrl 
-                  : new URL(variantUrl, streamUrl).href;
-                
-                streams.push({
-                  name: "FREE LIV TV HD",
-                  title: "▶️ HD Quality",
-                  url: fullUrl,
-                  behaviorHints: {
-                    notWebReady: false,
-                    bingeGroup: "tamil-live-tv"
-                  }
-                });
-                
-                break; // Just get the first variant
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.log("⚠️ Could not resolve stream variants:", e.message);
+    // Add proxy stream as backup
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || 
+                   `${req.protocol}://${req.get('host')}`;
+    
+    streams.push({
+      name: "Stream 2",
+      title: "Proxy",
+      url: `${baseUrl}/proxy/${id.replace("tamil:", "")}`,
+      behaviorHints: {
+        notWebReady: true,
+        bingeGroup: "tamil-live-tv",
+        isLive: true
       }
-    }
+    });
 
+    // Quick response for TV
     res.json({ streams });
 
   } catch (error) {
@@ -180,44 +176,88 @@ app.get("/stream/:type/:id.json", async (req, res) => {
 });
 
 // ===========================
-// STREAM PROXY (Fallback)
+// STREAM PROXY (Optimized)
 // ===========================
 app.get("/proxy/:id", async (req, res) => {
   try {
     const streamUrl = decodeId(req.params.id);
     
-    console.log("🔄 Proxying stream:", streamUrl);
+    // Set timeout for response
+    res.setTimeout(15000, () => {
+      console.log("⏱️ Request timeout");
+      res.status(504).send("Timeout");
+    });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     const response = await fetch(streamUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Smart-TV; Linux; Tizen 6.0) AppleWebKit/537.36",
-        "Referer": "https://freelivtvstrshare.vvishwas042.workers.dev/",
-        "Origin": "https://freelivtvstrshare.vvishwas042.workers.dev",
-        "Accept": "*/*"
+        "User-Agent": "ExoPlayerLib/2.11.8 (Linux; Android 11) TV",
+        "Accept": "application/vnd.apple.mpegurl, application/x-mpegURL, */*",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Referer": "https://freelivtvstrshare.vvishwas042.workers.dev/"
       },
-      timeout: 10000
+      signal: controller.signal,
+      compress: true
     });
+
+    clearTimeout(timeout);
 
     if (!response.ok) {
       throw new Error(`Stream returned ${response.status}`);
     }
 
-    // Forward content type
-    const contentType = response.headers.get("content-type");
-    if (contentType) {
-      res.set("Content-Type", contentType);
-    }
-
-    // Set CORS headers
-    res.set("Access-Control-Allow-Origin", "*");
-    res.set("Access-Control-Allow-Headers", "*");
+    // Set headers for TV compatibility
+    res.set({
+      "Content-Type": response.headers.get("content-type") || "application/vnd.apple.mpegurl",
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+      "Access-Control-Allow-Origin": "*",
+      "X-Content-Type-Options": "nosniff"
+    });
 
     // Pipe the stream
     response.body.pipe(res);
 
   } catch (error) {
-    console.error("❌ Proxy error:", error.message);
-    res.status(500).send("Stream not available");
+    if (error.name === 'AbortError') {
+      console.error("❌ Proxy timeout");
+      res.status(504).send("Stream timeout");
+    } else {
+      console.error("❌ Proxy error:", error.message);
+      res.status(503).send("Stream unavailable");
+    }
+  }
+});
+
+// ===========================
+// Direct M3U8 Handler (New)
+// ===========================
+app.get("/direct/:id.m3u8", async (req, res) => {
+  try {
+    const streamUrl = decodeId(req.params.id);
+    
+    const response = await fetch(streamUrl, {
+      headers: {
+        "User-Agent": "Samsung Smart TV",
+        "Accept": "*/*"
+      }
+    });
+
+    const content = await response.text();
+    
+    res.set({
+      "Content-Type": "application/vnd.apple.mpegurl",
+      "Cache-Control": "no-cache",
+      "Access-Control-Allow-Origin": "*"
+    });
+
+    res.send(content);
+
+  } catch (error) {
+    console.error("Direct error:", error);
+    res.status(503).send("#EXTM3U\n#EXT-X-ERROR:Stream unavailable\n");
   }
 });
 
@@ -228,30 +268,30 @@ app.get("/test/:id", async (req, res) => {
   try {
     const streamUrl = decodeId(req.params.id);
     
-    console.log("🧪 Testing stream:", streamUrl);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
 
     const response = await fetch(streamUrl, {
       method: "HEAD",
       headers: {
-        "User-Agent": "Stremio/4.0",
-        "Accept": "*/*"
+        "User-Agent": "Samsung TV"
       },
-      timeout: 5000
+      signal: controller.signal
     });
+
+    clearTimeout(timeout);
 
     res.json({
       url: streamUrl,
       status: response.status,
-      statusText: response.statusText,
       contentType: response.headers.get("content-type"),
-      contentLength: response.headers.get("content-length"),
-      headers: Object.fromEntries(response.headers.entries())
+      ok: response.ok
     });
 
   } catch (error) {
-    res.status(500).json({
+    res.json({
       error: error.message,
-      stack: error.stack
+      timeout: error.name === 'AbortError'
     });
   }
 });
@@ -265,6 +305,7 @@ app.get("/", (req, res) => {
     <html>
     <head>
       <title>FREE LIV TV Addon</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
         body {
           font-family: Arial, sans-serif;
@@ -281,52 +322,45 @@ app.get("/", (req, res) => {
         }
         h1 { color: #e74c3c; }
         .status { color: #27ae60; font-size: 24px; }
-        a {
-          display: inline-block;
+        .url-box {
+          background: #ecf0f1;
+          padding: 10px;
+          border-radius: 5px;
+          word-break: break-all;
           margin: 10px 0;
-          padding: 10px 20px;
+        }
+        .badge {
+          display: inline-block;
+          padding: 3px 8px;
           background: #3498db;
           color: white;
-          text-decoration: none;
-          border-radius: 5px;
-        }
-        a:hover { background: #2980b9; }
-        code {
-          background: #ecf0f1;
-          padding: 2px 6px;
           border-radius: 3px;
-          font-size: 14px;
+          font-size: 12px;
+          margin: 2px;
         }
       </style>
     </head>
     <body>
       <div class="container">
-        <h1>📺 FREE LIV TV Addon</h1>
-        <p class="status">✅ Status: Running</p>
-        <p>Tamil Live TV Channels - 180+ Channels</p>
+        <h1>📺 FREE LIV TV</h1>
+        <p class="status">✅ Running</p>
         
-        <h3>Installation:</h3>
-        <p>Copy this URL and install in Stremio:</p>
-        <code>${req.protocol}://${req.get('host')}/manifest.json</code>
+        <h3>Install URL:</h3>
+        <div class="url-box">
+          ${req.protocol}://${req.get('host')}/manifest.json
+        </div>
         
-        <br><br>
-        <a href="/manifest.json">📄 View Manifest</a>
-        
-        <h3>Supported Platforms:</h3>
-        <ul>
-          <li>✅ Stremio Desktop (Windows, Mac, Linux)</li>
-          <li>✅ Stremio Web</li>
-          <li>✅ Samsung TV (Tizen)</li>
-          <li>✅ LG TV (WebOS)</li>
-          <li>✅ Android TV</li>
-        </ul>
+        <h3>Optimized for:</h3>
+        <span class="badge">Samsung TV</span>
+        <span class="badge">Android TV</span>
+        <span class="badge">Desktop</span>
         
         <h3>Features:</h3>
         <ul>
-          <li>180+ Tamil TV Channels</li>
-          <li>Live News & Entertainment</li>
-          <li>Tamil Movies 24/7</li>
-          <li>HD Quality Streams</li>
+          <li>180+ Tamil Channels</li>
+          <li>Live Streaming</li>
+          <li>Low Latency</li>
+          <li>TV Optimized</li>
         </ul>
       </div>
     </body>
@@ -335,20 +369,40 @@ app.get("/", (req, res) => {
 });
 
 // ===========================
+// ERROR HANDLER
+// ===========================
+app.use((err, req, res, next) => {
+  console.error("Error:", err);
+  res.status(500).json({ error: "Internal server error" });
+});
+
+// ===========================
 // START SERVER
 // ===========================
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log("\n" + "=".repeat(50));
-  console.log("📺 FREE LIV TV Stremio Addon");
+  console.log("📺 FREE LIV TV - Samsung TV Optimized");
   console.log("=".repeat(50));
-  console.log(`✅ Server running on port ${PORT}`);
-  console.log(`🌐 Local: http://localhost:${PORT}`);
-  console.log(`📱 Install: http://localhost:${PORT}/manifest.json`);
+  console.log(`✅ Running on port ${PORT}`);
+  console.log(`🌐 http://localhost:${PORT}`);
+  console.log(`📱 http://localhost:${PORT}/manifest.json`);
   console.log("=".repeat(50) + "\n");
 });
 
-// Handle graceful shutdown
+// Graceful shutdown
 process.on("SIGTERM", () => {
-  console.log("👋 Shutting down gracefully...");
-  process.exit(0);
+  console.log("Shutting down...");
+  server.close(() => {
+    console.log("Server closed");
+    process.exit(0);
+  });
+});
+
+// Handle uncaught errors
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+});
+
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled Rejection:", err);
 });
