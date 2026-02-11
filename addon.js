@@ -17,9 +17,9 @@ function decodeId(id) {
 
 const manifest = {
   id: "org.freelivtv.tamil",
-  version: "1.0.2",
+  version: "1.0.3",
   name: "FREE LIV TV",
-  description: "Tamil Live TV",
+  description: "Tamil Live TV - Samsung Optimized",
   types: ["tv"],
   catalogs: [
     {
@@ -112,18 +112,26 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 
   try {
-    const streamUrl = decodeId(id.replace("tamil:", ""));
+    const encodedId = id.replace("tamil:", "");
+    const streamUrl = decodeId(encodedId);
     
-    console.log(`[STREAM] ${streamUrl}`);
+    // Get base URL for HLS proxy
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || 
+                   `https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost:3000'}`;
+    
+    console.log(`[STREAM] Original: ${streamUrl}`);
+    console.log(`[STREAM] Proxied: ${baseUrl}/hls/${encodedId}/playlist.m3u8`);
 
+    // Return HLS proxied stream (optimized for Samsung TV)
     return {
       streams: [{
-        url: streamUrl,
+        url: `${baseUrl}/hls/${encodedId}/playlist.m3u8`,
         behaviorHints: {
           notWebReady: true
         }
       }]
     };
+
   } catch (error) {
     console.error('[STREAM]', error);
     return { streams: [] };
