@@ -54,42 +54,140 @@ async function loadChannels() {
         const tvgLogo = tvgLogoMatch ? tvgLogoMatch[1].trim() : '';
         const tvgId = tvgIdMatch ? tvgIdMatch[1].trim() : '';
 
-        // Filter conditions
-        const isTMChannel = tvgName.startsWith('TM:');
-        const isTamilChannel = tvgName.toLowerCase().startsWith('tamil');
-        const isFreelivTamilGroup = groupTitle.startsWith('FREE LIV TV || TAMIL');
-        const isCricketGroup = groupTitle.includes('FREE LIV TV || CRICKET');
-        const is247Channel = tvgName.startsWith('24/7:');
+        // ==========================================
+        // STRICT FILTERING RULES
+        // ==========================================
+        
+        let shouldInclude = false;
+        let priority = 999; // Lower = higher priority
 
-        if (!isTMChannel && !isTamilChannel && !isFreelivTamilGroup && !isCricketGroup && !is247Channel) {
+        // Priority 1: Tamil groups from FREE LIV TV
+        if (groupTitle === 'FREE LIV TV || TAMIL | MOVIES') {
+          shouldInclude = true;
+          priority = 1;
+        } 
+        else if (groupTitle === 'FREE LIV TV || TAMIL | ENTERTAINMENT') {
+          shouldInclude = true;
+          priority = 2;
+        }
+        else if (groupTitle === 'FREE LIV TV || TAMIL | NEWS') {
+          shouldInclude = true;
+          priority = 3;
+        }
+        else if (groupTitle === 'FREE LIV TV || TAMIL | MUSIC') {
+          shouldInclude = true;
+          priority = 4;
+        }
+        // Priority 5: Cricket channels
+        else if (groupTitle === 'FREE LIV TV || CRICKET') {
+          shouldInclude = true;
+          priority = 5;
+        }
+        // Priority 6: TM: prefixed channels (Tamil channels)
+        else if (tvgName.startsWith('TM:')) {
+          shouldInclude = true;
+          priority = 6;
+        }
+        // Priority 7: CRIC || prefixed channels (Cricket)
+        else if (tvgName.startsWith('CRIC ||')) {
+          shouldInclude = true;
+          priority = 7;
+        }
+        // Priority 8: Specific Tamil patterns
+        else if (tvgName.match(/^(Tamil:|TAMIL:)/)) {
+          shouldInclude = true;
+          priority = 8;
+        }
+        // Priority 9: 24/7 Tamil channels
+        else if (tvgName.startsWith('24/7:') && tvgName.toLowerCase().includes('tamil')) {
+          shouldInclude = true;
+          priority = 9;
+        }
+        // Priority 10: Specific Tamil movie/entertainment patterns
+        else if (tvgName.match(/^TAMIL[\s-]*(MOVIES?|DRAMA|ACTION|ROMANCE|CRIME)/i)) {
+          shouldInclude = true;
+          priority = 10;
+        }
+
+        // EXCLUDE unwanted channels even if they match above
+        const excludePatterns = [
+          /hindi/i,
+          /telugu/i,
+          /malayalam/i,
+          /kannada/i,
+          /bengali/i,
+          /marathi/i,
+          /punjabi/i,
+          /gujarati/i,
+          /english\s*movies/i,
+          /hollywood/i,
+          /bollywood/i
+        ];
+
+        for (const pattern of excludePatterns) {
+          if (pattern.test(tvgName) || pattern.test(groupTitle)) {
+            shouldInclude = false;
+            break;
+          }
+        }
+
+        if (!shouldInclude) {
           current = null;
           continue;
         }
 
-        // Determine category
+        // ==========================================
+        // CATEGORY DETECTION
+        // ==========================================
+        
         let category = 'Entertainment';
         
-        if (groupTitle.includes('CRICKET') || /cricket/i.test(tvgName) || tvgName.startsWith('CRIC ||')) {
+        // Cricket
+        if (groupTitle.includes('CRICKET') || 
+            tvgName.match(/cricket|CRIC\s*\|\|/i) || 
+            tvgName.match(/sports.*cricket/i)) {
           category = 'Cricket';
-        } else if (groupTitle.includes('MOVIES') || /movie/i.test(tvgName)) {
+        }
+        // Movies
+        else if (groupTitle.includes('MOVIES') || 
+                 tvgName.match(/movies?|cinema|24\/7.*tamil/i) ||
+                 tvgName.match(/TAMIL[\s-]*(MOVIES?|DRAMA|ACTION|ROMANCE|CRIME)/i)) {
           category = 'Movies';
-        } else if (groupTitle.includes('NEWS') || /news/i.test(tvgName)) {
+        }
+        // News
+        else if (groupTitle.includes('NEWS') || 
+                 tvgName.match(/news|seithigal/i)) {
           category = 'News';
-        } else if (groupTitle.includes('MUSIC') || /music/i.test(tvgName)) {
+        }
+        // Music
+        else if (groupTitle.includes('MUSIC') || 
+                 tvgName.match(/music|isai|ganam|hits|melody/i)) {
           category = 'Music';
-        } else if (groupTitle.includes('KIDS') || /kids|cartoon/i.test(tvgName)) {
+        }
+        // Kids
+        else if (tvgName.match(/kids|cartoon|chutti/i)) {
           category = 'Kids';
-        } else if (/devotional|religious|god/i.test(tvgName)) {
+        }
+        // Devotional
+        else if (tvgName.match(/devotional|bhakthi|god|spiritual|hindu|christian/i)) {
           category = 'Devotional';
         }
+        // Entertainment (default)
+        else if (groupTitle.includes('ENTERTAINMENT') || 
+                 tvgName.match(/^TM:\s*(SUN|VIJAY|ZEE|COLORS|STAR|KTV)/i)) {
+          category = 'Entertainment';
+        }
 
-        // Determine quality
+        // ==========================================
+        // QUALITY DETECTION
+        // ==========================================
+        
         let quality = 'SD';
-        if (/4k|⁴ᵏ|uhd/i.test(tvgName)) {
+        if (tvgName.match(/4k|⁴ᵏ|uhd|2160/i)) {
           quality = '4K';
-        } else if (/fhd|ᶠᴴᴰ|1080/i.test(tvgName)) {
+        } else if (tvgName.match(/fhd|ᶠᴴᴰ|1080|full\s*hd/i)) {
           quality = 'FHD';
-        } else if (/hd|ᴴᴰ|720/i.test(tvgName)) {
+        } else if (tvgName.match(/hd|ᴴᴰ|720/i)) {
           quality = 'HD';
         }
 
@@ -100,7 +198,8 @@ async function loadChannels() {
           quality,
           logo: tvgLogo || null,
           tvgId: tvgId || null,
-          group: groupTitle
+          group: groupTitle,
+          priority
         };
 
       } else if (line.startsWith('http') && current) {
@@ -111,18 +210,41 @@ async function loadChannels() {
 
         current = null;
 
-        if (channels.length >= config.MAX_CHANNELS) break;
+        // Stop if we have enough channels
+        if (channels.length >= config.MAX_CHANNELS) {
+          log(`[M3U] Reached max channels limit (${config.MAX_CHANNELS})`);
+          break;
+        }
       }
     }
+
+    // Sort by priority (lower number = higher priority)
+    channels.sort((a, b) => a.priority - b.priority);
 
     log(`[M3U] Loaded ${channels.length} channels`);
     
     // Log category breakdown
     const categories = {};
+    const groups = {};
+    
     channels.forEach(ch => {
       categories[ch.category] = (categories[ch.category] || 0) + 1;
+      
+      // Count by group for debugging
+      const groupName = ch.group || 'No Group';
+      groups[groupName] = (groups[groupName] || 0) + 1;
     });
+    
     debug('[M3U] Categories:', categories);
+    debug('[M3U] Groups:', groups);
+
+    // Log sample channels for debugging
+    if (config.DEBUG) {
+      debug('[M3U] Sample channels (first 5):');
+      channels.slice(0, 5).forEach(ch => {
+        debug(`  - ${ch.name} (${ch.category}, ${ch.group})`);
+      });
+    }
 
     // Cache channels
     channelCache.set('channels', channels);
@@ -174,15 +296,54 @@ async function getCategories() {
     categories.set(ch.category, categories.get(ch.category) + 1);
   });
   
-  return Array.from(categories.entries()).map(([name, count]) => ({
-    name,
-    count
-  }));
+  // Sort by count (descending)
+  return Array.from(categories.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => ({ name, count }));
+}
+
+// Debug function to show what's being parsed
+async function debugParsing() {
+  const channels = await loadChannels();
+  
+  console.log('\n' + '='.repeat(60));
+  console.log('PARSING DEBUG REPORT');
+  console.log('='.repeat(60));
+  console.log(`Total Channels: ${channels.length}`);
+  console.log('\nBy Category:');
+  
+  const cats = await getCategories();
+  cats.forEach(c => {
+    console.log(`  ${c.name}: ${c.count}`);
+  });
+  
+  console.log('\nBy Group:');
+  const groups = {};
+  channels.forEach(ch => {
+    const g = ch.group || 'No Group';
+    groups[g] = (groups[g] || 0) + 1;
+  });
+  
+  Object.entries(groups)
+    .sort((a, b) => b[1] - a[1])
+    .forEach(([group, count]) => {
+      console.log(`  ${group}: ${count}`);
+    });
+  
+  console.log('\nSample Channels:');
+  channels.slice(0, 10).forEach((ch, i) => {
+    console.log(`${i + 1}. ${ch.name}`);
+    console.log(`   Category: ${ch.category}, Quality: ${ch.quality}`);
+    console.log(`   Group: ${ch.group}`);
+  });
+  
+  console.log('='.repeat(60) + '\n');
 }
 
 module.exports = {
   loadChannels,
   getChannelsByCategory,
   getChannelByUrl,
-  getCategories
+  getCategories,
+  debugParsing
 };
